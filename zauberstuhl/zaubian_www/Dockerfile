@@ -12,7 +12,7 @@ WORKDIR /home/zauberstuhl/workspace
 
 RUN git clone https://github.com/zauberstuhl/zauberstuhl.git
 WORKDIR zauberstuhl
-RUN sed "s/\"password\"/\"$PASSWORD\"/" conf/application.conf > conf/application.conf.tmp
+RUN sed "s/\"password\"/\"\\$PASSWORD\"/" conf/application.conf > conf/application.conf.tmp
 RUN mv conf/application.conf.tmp conf/application.conf && sbt stage
 
 EXPOSE 9000

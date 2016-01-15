@@ -1,15 +1,19 @@
-FROM debian:jessie
+#docker build --build-arg PASSWORD='xxx' -t zaubian_www:latest .
+#docker run --restart=always --name=zaubian_www -d -p 127.0.0.1:9000:9000 zaubian_www:latest
+
+FROM zaubian:0.0.1
 MAINTAINER Lukas Matt <lukas@zauberstuhl.de>
 
-ENV DEBIAN_FRONTEND noninteractive
+# email password
+ARG PASSWORD
 
-#
-## dependencies
-#
+RUN mkdir -p /home/zauberstuhl/workspace
+WORKDIR /home/zauberstuhl/workspace
 
-RUN apt-get update && apt-get install -y apt-transport-https
-# sbt source
-RUN echo "deb https://dl.bintray.com/sbt/debian /" | tee -a /etc/apt/sources.list.d/sbt.list
-RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 642AC823
-RUN apt-get update && apt-get install -y default-jdk sbt git-core
-RUN apt-get clean && apt-get autoclean
+RUN git clone https://github.com/zauberstuhl/zauberstuhl.git
+WORKDIR zauberstuhl
+RUN sed "s/\"password\"/\"\\$PASSWORD\"/" conf/application.conf > conf/application.conf.tmp
+RUN mv conf/application.conf.tmp conf/application.conf && sbt stage
+
+EXPOSE 9000
+CMD ["/bin/bash", "target/universal/stage/bin/zauberstuhl", "-J-Xms128m", "-J-Xmx256m"]

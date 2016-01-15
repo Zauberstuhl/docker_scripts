@@ -16,7 +16,7 @@
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-source /etc/monit/monit.conf || exit 1;
+source /data/monit.conf || exit 1;
 
 echo "Hit Strg+C to exit this program!";
 
@@ -24,7 +24,7 @@ PID_LIST=();
 for n in $(seq 0 $((${#PROCESS_LIST[*]}-1)))
 do
   EXEC=${PROCESS_LIST[$n]};
-  $($EXEC) & PID=$!;
+  eval $EXEC & PID=$!;
   echo "[$PID]: $EXEC";
   PID_LIST+=("$PID");
 done
@@ -38,7 +38,7 @@ do
       PGID=$(ps -o pgid=${PID_LIST[$n]} | grep -o [0-9]*);
       echo -e "Shutting down:\n$PGID";
       kill -- -$PGID >/dev/null 2>&1;
-      
+
       # normally not required but in
       # case something went wrong
       exit 1;

@@ -16,7 +16,7 @@
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-source conf/monit.conf || exit 1;
+source /etc/monit/monit.conf || exit 1;
 
 echo "Hit Strg+C to exit this program!";
 

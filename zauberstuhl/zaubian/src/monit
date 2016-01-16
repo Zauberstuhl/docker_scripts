@@ -16,32 +16,69 @@
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-source /data/monit.conf || exit 1;
+# Try reading the configuration file
+if [ "$1" == "" ]; then
+  source /etc/monit.conf >/dev/null 2>&1 \
+    || source /data/monit.conf >/dev/null 2>&1 \
+    || (echo -e "Usage:\n\t$0 <configuration-file>" && exit 1);
+else
+  source $1 >/dev/null 2>&1 \
+    || (echo "Wasn't able load: $1" && exit 1);
+fi
 
-echo "Hit Strg+C to exit this program!";
+echo -e "\e[1;32mHit Ctrl+C to exit this program!\e[0m";
 
 PID_LIST=();
+exec_cmd() {
+  if [[ "$@" == "" ]]; then return 1; fi;
+  CMD=$@; eval $CMD & PID=$!;
+  echo -e "Starting [$PID] \e[1;35m$CMD\e[0m";
+  PID_LIST+=("$PID") && return 0;
+}
+shutdown() {
+  echo -en "\e[1;31mShutting down..\e[0m " && killall -g -v ${0#*/};
+  # normally not required but in
+  # case something went wrong
+  exit 255;
+}
+
+# Iterate over process list and
+# fork them into background
 for n in $(seq 0 $((${#PROCESS_LIST[*]}-1)))
 do
-  EXEC=${PROCESS_LIST[$n]};
-  eval $EXEC & PID=$!;
-  echo "[$PID]: $EXEC";
-  PID_LIST+=("$PID");
+  CMD=${PROCESS_LIST[$n]};
+  if ! exec_cmd $CMD; then
+    echo "$CMD .. failed!" && exit 1;
+  fi
 done
 
+# Iterate over cronjob list
+# and execute it in a infinity loop
+for n in $(seq 0 $((${#CRONJOB_LIST[*]}-1)))
+do
+  HASH=${CRONJOB_LIST[$n]};
+  CMD="while :; do ${HASH%%:*}; sleep ${HASH#*:}; done;";
+  if ! exec_cmd $CMD; then
+    echo "$CMD .. failed!" && exit 1;
+  fi
+done
+
+# Trap Ctrl-C; exit
+# but terminate all sub-processes
+trap shutdown INT;
+# Monitoring loop
 while :;
 do
+  # Iterate over running process IDs
   for n in $(seq 0 $((${#PID_LIST[*]}-1)))
   do
+    # Check process whether alive or not
+    # with kill signal zero
     kill -0 ${PID_LIST[$n]};
     if (( $? > 0 )); then
-      PGID=$(ps -o pgid=${PID_LIST[$n]} | grep -o [0-9]*);
-      echo -e "Shutting down:\n$PGID";
-      kill -- -$PGID >/dev/null 2>&1;
-
-      # normally not required but in
-      # case something went wrong
-      exit 1;
+      # Process died send signal TERM
+      # to all sub process and the main process
+      shutdown;
     fi
   done
   sleep 1;

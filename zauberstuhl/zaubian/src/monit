@@ -16,72 +16,145 @@
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# Try reading the configuration file
-if [ "$1" == "" ]; then
-  source /etc/monit.conf >/dev/null 2>&1 \
-    || source /data/monit.conf >/dev/null 2>&1 \
-    || (echo -e "Usage:\n\t$0 <configuration-file>" && exit 1);
-else
-  source $1 >/dev/null 2>&1 \
-    || (echo "Wasn't able load: $1" && exit 1);
-fi
+MONIT_PID='/tmp/.monit.pid';
+MONIT_PIPE='/tmp/.monit.pipe';
 
-echo -e "\e[1;32mHit Ctrl+C to exit this program!\e[0m";
+change() {
+  PID=$1;
+  # Create the fifo file and request
+  # the change to the monit worker
+  if [[ ! -p $MONIT_PIPE ]]; then
+    mknod $MONIT_PIPE p;
+  fi
+  echo $PID >$MONIT_PIPE;
+  # Print result
+  if read -t 3 RES <$MONIT_PIPE; then
+    echo -e $RES;
+  fi
+}
 
-PID_LIST=();
-exec_cmd() {
+execmd() {
   if [[ "$@" == "" ]]; then return 1; fi;
+
+  # Evaluate string
   CMD=$@; eval $CMD & PID=$!;
   echo -e "Starting [$PID] \e[1;35m$CMD\e[0m";
-  PID_LIST+=("$PID") && return 0;
+  # and write process ID to pid-file
+  echo "$PID#$CMD" >> $MONIT_PID;
+
+  return 0;
 }
+
 shutdown() {
-  echo -en "\e[1;31mShutting down..\e[0m " && killall -g -v ${0#*/};
-  # normally not required but in
-  # case something went wrong
-  exit 255;
+  echo -en "\e[1;31mShutting down..\e[0m";
+
+  rm -f $MONIT_PID $MONIT_PIPE;
+  # Kill yourself including all childs
+  killall -g -v ${0#*/};
 }
 
-# Iterate over process list and
-# fork them into background
-for n in $(seq 0 $((${#PROCESS_LIST[*]}-1)))
-do
-  CMD=${PROCESS_LIST[$n]};
-  if ! exec_cmd $CMD; then
-    echo "$CMD .. failed!" && exit 1;
-  fi
-done
-
-# Iterate over cronjob list
-# and execute it in a infinity loop
-for n in $(seq 0 $((${#CRONJOB_LIST[*]}-1)))
-do
-  HASH=${CRONJOB_LIST[$n]};
-  CMD="while :; do ${HASH%%:*}; sleep ${HASH#*:}; done;";
-  if ! exec_cmd $CMD; then
-    echo "$CMD .. failed!" && exit 1;
-  fi
-done
-
-# Trap Ctrl-C; exit
-# but terminate all sub-processes
-trap shutdown INT;
-# Monitoring loop
-while :;
-do
-  # Iterate over running process IDs
-  for n in $(seq 0 $((${#PID_LIST[*]}-1)))
+startup() {
+  # Iterate over process list and
+  # fork them into the background
+  for n in $(seq 0 $((${#PROCESS_LIST[*]}-1)))
   do
-    # Check process whether alive or not
-    # with kill signal zero
-    kill -0 ${PID_LIST[$n]};
-    if (( $? > 0 )); then
-      # Process died send signal TERM
-      # to all sub process and the main process
-      shutdown;
+    CMD=${PROCESS_LIST[$n]};
+    if ! execmd $CMD; then
+      echo "$CMD .. failed!" && exit 1;
     fi
   done
-  sleep 1;
-done
+
+  # Iterate over cronjob list
+  # and execute it as infinity loop
+  for n in $(seq 0 $((${#CRONJOB_LIST[*]}-1)))
+  do
+    HASH=${CRONJOB_LIST[$n]};
+    CMD="while :; do ${HASH%%:*}; sleep ${HASH#*:}; done;";
+    if ! execmd $CMD; then
+      echo "$CMD .. failed!" && exit 1;
+    fi
+  done
+
+  # Start the Monit worker for change requests
+  while :;
+  do
+    if [[ -p "$MONIT_PIPE" ]]; then
+      read -t 3 pid <$MONIT_PIPE;
+      if [[ "$pid" != "" ]]; then
+        TMP=$(cat $MONIT_PID |cut -d'#' -f 1);
+        LIST=(${TMP//\n});
+        # Iterate over the existing list and
+        # try to remove the PID if exists
+        for n in $(seq 0 $((${#LIST[*]}-1)))
+        do
+          if [[ "${LIST[$n]}" == $pid ]]; then
+            EXISTS=true;
+            NLIST=$(cat $MONIT_PID |grep -v ^$pid |sed ':a;N;$!ba;s/\n/\\n/g');
+            RES="\\e[1;31mRemoving\\e[0m $pid from process list..";
+            echo -e $NLIST > $MONIT_PID;
+            echo -e $RES && echo -e $RES >$MONIT_PIPE;
+          fi
+        done
+        # If the PID is not available check whether
+        # alive and append it to the PID list
+        if [ ! $EXISTS ]; then
+          RES="\\e[1;32mAdding\\e[0m $pid to process list..";
+          kill -0 $pid;
+          if (( $? == 0 )); then
+            echo "$pid#Manually added" >> $MONIT_PID;
+          else
+            RES="\\e[1;31mProcess is not alive! Cannot add to PID list..\\e[0m";
+          fi
+          echo -e $RES && echo -e $RES >$MONIT_PIPE;
+        fi
+        EXISTS=;
+      fi
+    else
+      sleep 1;
+    fi
+  done & echo "$!#Monit Pipe" >> $MONIT_PID;
+
+  # Trap Ctrl-C; exit
+  # but terminate all sub-processes
+  trap shutdown INT;
+  echo -e "\e[1;32mHit Ctrl+C to exit this program!\e[0m";
+
+  while :;
+  do
+    TMP=$(cat $MONIT_PID |cut -d'#' -f 1);
+    LIST=(${TMP//\n});
+    # Iterate over running process IDs
+    for n in $(seq 0 $((${#LIST[*]}-1)))
+    do
+      # Check process whether alive or not
+      # with kill signal zero
+      kill -0 ${LIST[$n]};
+      if (( $? > 0 )); then
+        # Process died send signal TERM
+        # to all sub process and the main process
+        shutdown;
+      fi
+    done
+    sleep 1;
+  done
+}
+
+case $1 in
+  remove|rm|add)
+    change $2;
+    ;;
+  *)
+    # Try reading the configuration file
+    if [ "$1" == "" ]; then
+      source /etc/monit.conf >/dev/null 2>&1 \
+        || source /data/monit.conf >/dev/null 2>&1 \
+        || (echo -e "Usage:\n\t$0 <configuration-file>" && exit 1);
+    else
+      source $1 >/dev/null 2>&1 \
+        || (echo "Wasn't able load: $1" && exit 1);
+    fi
+    startup;
+    ;;
+esac
 
 exit 0;

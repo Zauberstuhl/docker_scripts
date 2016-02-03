@@ -33,18 +33,6 @@ change() {
   fi
 }
 
-execmd() {
-  if [[ "$@" == "" ]]; then return 1; fi;
-
-  # Evaluate string
-  CMD=$@; eval $CMD & PID=$!;
-  echo -e "Starting [$PID] \e[1;35m$CMD\e[0m";
-  # and write process ID to pid-file
-  echo "$PID#$CMD" >> $MONIT_PID;
-
-  return 0;
-}
-
 shutdown() {
   echo -en "\e[1;31mShutting down..\e[0m";
 
@@ -59,20 +47,16 @@ startup() {
   for n in $(seq 0 $((${#PROCESS_LIST[*]}-1)))
   do
     CMD=${PROCESS_LIST[$n]};
-    if ! execmd $CMD; then
-      echo "$CMD .. failed!" && exit 1;
+    # Evaluate string
+    eval $CMD & PID=$!; RID=$?;
+    if (($RID > 0)); then
+      echo "Something went wrong while executing:";
+      echo "\t$PID:$RID:\e[1;35m$CMD\e[0m" && exit 1;
+    else
+      echo -e "Starting daemon ($PID) \e[1;35m$CMD\e[0m";
     fi
-  done
-
-  # Iterate over cronjob list
-  # and execute it as infinity loop
-  for n in $(seq 0 $((${#CRONJOB_LIST[*]}-1)))
-  do
-    HASH=${CRONJOB_LIST[$n]};
-    CMD="while :; do ${HASH%%:*}; sleep ${HASH#*:}; done;";
-    if ! execmd $CMD; then
-      echo "$CMD .. failed!" && exit 1;
-    fi
+    # and write process ID to pid-file
+    echo "$PID#$CMD" >> $MONIT_PID;
   done
 
   # Start the Monit worker for change requests
@@ -119,8 +103,21 @@ startup() {
   trap shutdown INT;
   echo -e "\e[1;32mHit Ctrl+C to exit this program!\e[0m";
 
+  GLBTME=1;
   while :;
   do
+    # Iterate over cronjob list
+    for n in $(seq 0 $((${#CRONJOB_LIST[*]}-1)))
+    do
+      HASH=${CRONJOB_LIST[$n]};
+      MODULO=$(($GLBTME % ${HASH#*:}));
+      if (($MODULO == 0));
+      then
+        echo -e "[$GLBTME] \e[1;35m${HASH%%:*}\e[0m => ";
+        eval ${HASH%%:*} | sed 's/^/> /g';
+      fi
+    done
+
     TMP=$(cat $MONIT_PID |cut -d'#' -f 1);
     LIST=(${TMP//\n});
     # Iterate over running process IDs
@@ -135,6 +132,16 @@ startup() {
         shutdown;
       fi
     done
+
+    # reset after one day
+    # NOTE that will limit the time range
+    # for monit jobs to one day
+    if (($GLBTME > 86400));
+    then
+      GLBTME=1;
+    else
+      let "GLBTME++";
+    fi
     sleep 1;
   done
 }

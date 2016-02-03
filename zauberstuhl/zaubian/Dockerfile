@@ -9,4 +9,4 @@ WORKDIR /workspace
 ADD conf/monit.conf /etc/monit/monit.conf
 ADD src/monit /bin/monit
 
-CMD ["/bin/bash", "/bin/monit"]
+CMD ["/bin/bash", "/bin/monit start"]
